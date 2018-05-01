@@ -27,8 +27,6 @@
 
 #define ARRAY_SIZE(a) (sizeof(a)/sizeof((a)[0]))
 
-static void sndio_free(snd_pcm_ioplug_t *io);
-
 static snd_pcm_format_t cap_fmts[] = {
 	/* XXX add s24le3 and s24be3 */
 	SND_PCM_FORMAT_S32_LE,	SND_PCM_FORMAT_S32_BE,
@@ -51,6 +49,8 @@ typedef struct snd_pcm_sndio {
 	snd_pcm_sframes_t ptr;
 	int started;
 } snd_pcm_sndio_t;
+
+static void sndio_free(snd_pcm_sndio_t *);
 
 static snd_pcm_sframes_t
 sndio_write(snd_pcm_ioplug_t *io,
@@ -113,7 +113,10 @@ sndio_stop(snd_pcm_ioplug_t *io)
 static int
 sndio_close(snd_pcm_ioplug_t *io)
 {
-	sndio_free(io);
+	snd_pcm_sndio_t *sndio = io->private_data;
+	if (sndio->started)
+		sndio_stop(io);
+	sndio_free(sndio);
 	return 0;
 }
 
@@ -360,11 +363,11 @@ sndio_sw_params(snd_pcm_ioplug_t *io, snd_pcm_sw_params_t *params)
 }
 
 static void
-sndio_free(snd_pcm_ioplug_t *io)
+sndio_free(snd_pcm_sndio_t *sndio)
 {
-	snd_pcm_sndio_t *sndio = io->private_data;
 	if (sndio->hdl)
 		sio_close(sndio->hdl);
+	free(sndio);
 }
 
 static snd_pcm_ioplug_callback_t sndio_pcm_callback = {
@@ -383,7 +386,7 @@ static int
 sndio_open(snd_pcm_t **pcmp, const char *name, const char *device,
     snd_pcm_stream_t stream, int mode, long volume)
 {
-	snd_pcm_sndio_t *pcm;
+	snd_pcm_sndio_t *pcm_sndio;
 	int err;
 
 	if (stream != SND_PCM_STREAM_PLAYBACK) {
@@ -391,45 +394,47 @@ sndio_open(snd_pcm_t **pcmp, const char *name, const char *device,
 		return -ENOTSUP;
 	}
 
-	pcm = calloc(1, sizeof(*pcm));
-	if(pcm == NULL)
+	pcm_sndio = calloc(1, sizeof *pcm_sndio);
+	if(pcm_sndio == NULL)
 		return -ENOMEM;
 
-	pcm->hdl = sio_open(device ? device : SIO_DEVANY,
+	pcm_sndio->hdl = sio_open(device ? device : SIO_DEVANY,
 	    stream == SND_PCM_STREAM_PLAYBACK ? SIO_PLAY : SIO_REC, 0);
-	if(pcm->hdl == NULL) {
-		sndio_free(&pcm->io);
+	if (pcm_sndio->hdl == NULL) {
+		free(pcm_sndio);
 		return -ENOENT;
 	}
 
 	if (volume >= 0 && volume <= SIO_MAXVOL) {
-		if (sio_setvol(pcm->hdl, (unsigned int)volume) == 0)
+		if (sio_setvol(pcm_sndio->hdl, (unsigned int)volume) == 0)
 			SNDERR("sndio: couldn't set intial volume");
 	}
 
-	sio_initpar(&pcm->par);
+	sio_initpar(&pcm_sndio->par);
 
-	pcm->io.version = SND_PCM_IOPLUG_VERSION;
-	pcm->io.name = "ALSA <-> SNDIO PCM I/O Plugin";
-	pcm->io.mmap_rw = 0;
-	pcm->io.callback = &sndio_pcm_callback;
-	pcm->io.private_data = pcm;
-	pcm->ptr = 0;
-	pcm->started = 0;
+	pcm_sndio->io.version = SND_PCM_IOPLUG_VERSION;
+	pcm_sndio->io.name = "ALSA <-> SNDIO PCM I/O Plugin";
+	pcm_sndio->io.callback = &sndio_pcm_callback;
+	pcm_sndio->io.private_data = pcm_sndio;
+	pcm_sndio->io.mmap_rw = 0;
 
-	err = snd_pcm_ioplug_create(&pcm->io, name, stream, mode);
+	pcm_sndio->ptr = 0;
+	pcm_sndio->started = 0;
+
+	err = snd_pcm_ioplug_create(&pcm_sndio->io, name, stream, mode);
 	if(err < 0) {
-		sndio_free(&pcm->io);
+		sndio_free(pcm_sndio);
 		return err;
 	}
 
-	err = sndio_hw_constraint(pcm);
+	err = sndio_hw_constraint(pcm_sndio);
 	if (err < 0) {
-		snd_pcm_ioplug_delete(&pcm->io);
-		sndio_free(&pcm->io);
+		snd_pcm_ioplug_delete(&pcm_sndio->io);
+		sndio_free(pcm_sndio);
 	}
 
-	*pcmp = pcm->io.pcm;
+	*pcmp = pcm_sndio->io.pcm;
+
 	return 0;
 }
 
