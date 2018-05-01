@@ -46,7 +46,10 @@ typedef struct snd_pcm_sndio {
 	struct sio_par par;
 
 	unsigned int bpf;
+
 	snd_pcm_sframes_t ptr;
+	snd_pcm_sframes_t realptr;
+
 	int started;
 } snd_pcm_sndio_t;
 
@@ -84,6 +87,14 @@ sndio_write(snd_pcm_ioplug_t *io,
 
 	sndio->ptr += n / sndio->bpf;
 	return n / sndio->bpf;
+}
+
+static int
+sndio_delay(snd_pcm_ioplug_t *io, snd_pcm_sframes_t *delayp)
+{
+	snd_pcm_sndio_t *sndio = io->private_data;
+	*delayp = sndio->ptr - sndio->realptr;
+	return 0;
 }
 
 static snd_pcm_sframes_t
@@ -135,7 +146,9 @@ static int
 sndio_prepare(snd_pcm_ioplug_t *io)
 {
 	snd_pcm_sndio_t *sndio = io->private_data;
+
 	sndio->ptr = 0;
+	sndio->realptr = 0;
 	return 0;
 }
 
@@ -370,6 +383,13 @@ sndio_free(snd_pcm_sndio_t *sndio)
 	free(sndio);
 }
 
+static void
+cb(void *arg, int delta)
+{
+	snd_pcm_sndio_t *sndio = arg;
+	sndio->realptr += delta;
+}
+
 static snd_pcm_ioplug_callback_t sndio_pcm_callback = {
 	.start = sndio_start,
 	.stop = sndio_stop,
@@ -380,6 +400,7 @@ static snd_pcm_ioplug_callback_t sndio_pcm_callback = {
 	.prepare = sndio_prepare,
 	.hw_params = sndio_hw_params,
 	.sw_params = sndio_sw_params,
+	.delay = sndio_delay,
 };
 
 static int
@@ -404,6 +425,8 @@ sndio_open(snd_pcm_t **pcmp, const char *name, const char *device,
 		free(pcm_sndio);
 		return -ENOENT;
 	}
+
+	sio_onmove(pcm_sndio->hdl, cb, pcm_sndio);
 
 	if (volume >= 0 && volume <= SIO_MAXVOL) {
 		if (sio_setvol(pcm_sndio->hdl, (unsigned int)volume) == 0)
