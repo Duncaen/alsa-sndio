@@ -65,16 +65,6 @@ sndio_write(snd_pcm_ioplug_t *io,
 	unsigned int bufsz, n;
 	char *buf;
 
-	if (sndio->started == 0) {
-		if (sio_start(sndio->hdl) == 0) {
-			if (sio_eof(sndio->hdl) == 1)
-				return -EBADFD;
-			return -EAGAIN;
-		}
-		sndio->ptr = 0;
-		sndio->started = 1;
-	}
-
 	n = 0;
 	buf = (char *)areas->addr + (areas->first + areas->step * offset) / 8;
 	bufsz = (size * sndio->bpf);
@@ -135,10 +125,7 @@ static int
 sndio_drain(snd_pcm_ioplug_t *io)
 {
 	snd_pcm_sndio_t *sndio = io->private_data;
-	if (sndio->started) {
-		sio_stop(sndio->hdl);
-		sndio->started = 0;
-	}
+	sio_stop(sndio->hdl);
 	return 0;
 }
 
@@ -149,6 +136,16 @@ sndio_prepare(snd_pcm_ioplug_t *io)
 
 	sndio->ptr = 0;
 	sndio->realptr = 0;
+
+	sndio_stop(io);
+
+	if (sio_start(sndio->hdl) == 0) {
+		if (sio_eof(sndio->hdl) == 1)
+			return -EBADFD;
+		return -EAGAIN;
+	}
+	sndio->started = 1;
+
 	return 0;
 }
 
