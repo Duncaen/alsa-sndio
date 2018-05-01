@@ -209,7 +209,7 @@ sndio_hw_constraint(snd_pcm_sndio_t *sndio)
 	err = snd_pcm_ioplug_set_param_minmax(io,
 	    SND_PCM_IOPLUG_HW_BUFFER_BYTES,
 	    64,
-		2 * 1024 * 1024);
+		4 * 1024 * 1024);
 	if (err < 0)
 		return err;
 
@@ -324,9 +324,12 @@ sndio_hw_params(snd_pcm_ioplug_t *io,
 	if (sndio_alsa_fmttopar(io->format, &par->bits, &par->sig, &par->le) == 0)
 		return -EINVAL;
 
+	sndio->bpf =
+		((snd_pcm_format_physical_width(io->format) * io->channels) / 8);
+
 	par->bps = SIO_BPS(par->bits);
 	par->rate = io->rate;
-	par->appbufsz = io->buffer_size;
+	par->appbufsz = io->period_size;
 
 	if (sio_setpar(sndio->hdl, par) == 0 ||
 	    sio_getpar(sndio->hdl, &retpar) == 0)
@@ -338,36 +341,6 @@ sndio_hw_params(snd_pcm_ioplug_t *io,
 	    (par->bps > 1 && par->le != retpar.le) ||
 	    (par->bits < par->bps * 8 && par->msb != retpar.msb))
 		return -1;
-
-	sndio->bpf =
-		((snd_pcm_format_physical_width(io->format) * io->channels) / 8);
-
-	return 0;
-}
-
-static int
-sndio_sw_params(snd_pcm_ioplug_t *io, snd_pcm_sw_params_t *params)
-{
-	snd_pcm_sndio_t *sndio = io->private_data;
-
-	if (io->stream == SND_PCM_STREAM_PLAYBACK) {
-		if (snd_pcm_sw_params_set_start_threshold(io->pcm, params, sndio->par.bufsz) < 0) {
-			SNDERR("sndio: couldn't set start threshold\n");
-			return -EINVAL;
-		}
-		if (snd_pcm_sw_params_set_stop_threshold(io->pcm, params, sndio->par.bufsz) < 0) {
-			SNDERR("sndio: couldn't set stop threshold\n");
-			return -EINVAL;
-		}
-		if (snd_pcm_sw_params_set_avail_min(io->pcm, params, 1) < 0) {
-			SNDERR("sndio: couldn't set avail min\n");
-			return -EINVAL;
-		}
-		if (snd_pcm_sw_params_set_period_event(io->pcm, params, 1) < 0) {
-			SNDERR("sndio: couldn't set period event\n");
-			return -EINVAL;
-		}
-	}
 
 	return 0;
 }
@@ -396,7 +369,6 @@ static snd_pcm_ioplug_callback_t sndio_pcm_callback = {
 	.close = sndio_close,
 	.prepare = sndio_prepare,
 	.hw_params = sndio_hw_params,
-	.sw_params = sndio_sw_params,
 	.delay = sndio_delay,
 };
 
