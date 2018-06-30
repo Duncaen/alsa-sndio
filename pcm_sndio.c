@@ -69,10 +69,18 @@ sndio_write(snd_pcm_ioplug_t *io,
 	buf = (char *)areas->addr + (areas->first + areas->step * offset) / 8;
 	bufsz = (size * sndio->bpf);
 
-	if ((n = sio_write(sndio->hdl, buf, bufsz)) <= 0) {
-		if (sio_eof(sndio->hdl) == 1)
-			return -EIO;
-		return n;
+	if (io->stream == SND_PCM_STREAM_PLAYBACK) {
+		if ((n = sio_write(sndio->hdl, buf, bufsz)) <= 0) {
+			if (sio_eof(sndio->hdl) == 1)
+				return -EIO;
+			return n;
+		}
+	} else {
+		if ((n = sio_read(sndio->hdl, buf, bufsz)) <= 0) {
+			if (sio_eof(sndio->hdl) == 1)
+				return -EIO;
+			return n;
+		}
 	}
 
 	sndio->ptr += n / sndio->bpf;
@@ -91,7 +99,7 @@ static snd_pcm_sframes_t
 sndio_pointer(snd_pcm_ioplug_t *io)
 {
 	snd_pcm_sndio_t *sndio = io->private_data;
-	return sndio->ptr;
+	return sndio->ptr + (io->stream == SND_PCM_STREAM_CAPTURE) * io->buffer_size;
 }
 
 static int
@@ -379,11 +387,6 @@ sndio_open(snd_pcm_t **pcmp, const char *name, const char *device,
 	snd_pcm_sndio_t *pcm_sndio;
 	int err;
 
-	if (stream != SND_PCM_STREAM_PLAYBACK) {
-		SNDERR("sndio: only playback streams are supported");
-		return -ENOTSUP;
-	}
-
 	pcm_sndio = calloc(1, sizeof *pcm_sndio);
 	if(pcm_sndio == NULL)
 		return -ENOMEM;
@@ -409,6 +412,11 @@ sndio_open(snd_pcm_t **pcmp, const char *name, const char *device,
 	pcm_sndio->io.callback = &sndio_pcm_callback;
 	pcm_sndio->io.private_data = pcm_sndio;
 	pcm_sndio->io.mmap_rw = 0;
+
+	struct pollfd pfd;
+	sio_pollfd(pcm_sndio->hdl, &pfd, stream == SND_PCM_STREAM_PLAYBACK ? POLLOUT : POLLIN);
+	pcm_sndio->io.poll_fd = pfd.fd;
+	pcm_sndio->io.poll_events = pfd.events;
 
 	pcm_sndio->ptr = 0;
 	pcm_sndio->started = 0;
