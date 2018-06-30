@@ -329,7 +329,7 @@ sndio_hw_params(snd_pcm_ioplug_t *io,
 
 	par->bps = SIO_BPS(par->bits);
 	par->rate = io->rate;
-	par->appbufsz = io->period_size;
+	par->appbufsz = io->buffer_size;
 
 	if (sio_setpar(sndio->hdl, par) == 0 ||
 	    sio_getpar(sndio->hdl, &retpar) == 0)
